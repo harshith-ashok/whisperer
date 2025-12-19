@@ -1,0 +1,11 @@
+*.pyc
+__pycache__/
+.DS_Store
+*.ckpt
+*.pt
+data/raw/
+logs/
+.env
+node_modules/
+venv/
+data/
