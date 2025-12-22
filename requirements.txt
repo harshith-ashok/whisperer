@@ -1,0 +1,7 @@
+openai-whisper
+torch
+torchaudio
+numpy
+soundfile
+gTTS
+googletrans==4.0.0-rc1
