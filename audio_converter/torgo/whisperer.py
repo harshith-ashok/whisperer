@@ -1,24 +1,12 @@
 import os
 import csv
-import whisper
 from collections import defaultdict
-import random
-
+import mlx_whisper
 
 ROOT = "../../data/torgo-audio"
-OUTPUT_CSV = "torgo_whisper.csv"
-MODEL_NAME = "base"
-DEVICE = "cpu"
+OUTPUT_CSV = "torgo_whisper_mlx.csv"
 FILES_PER_SESSION = 5
-
-
-def collect_wav_files(root):
-    wavs = []
-    for r, _, files in os.walk(root):
-        for f in files:
-            if f.lower().endswith(".wav"):
-                wavs.append(os.path.join(r, f))
-    return wavs
+MODEL_NAME = "mlx-community/whisper-turbo"
 
 
 def parse_metadata(path):
@@ -27,96 +15,90 @@ def parse_metadata(path):
     if len(parts) < 3:
         raise ValueError(f"Invalid TORGO path: {path}")
 
-    group = parts[-3]
-    folder = parts[-2]
-    filename = parts[-1]
+    group = parts[-3]       # F_Con / F_Dys / M_Con / M_Dys
+    folder = parts[-2]      # wav_arrayMic_FC01S01
+    filename = parts[-1]    # wav_arrayMic_FC01S01_0003.wav
 
     folder_parts = folder.split("_")
     if len(folder_parts) < 3:
         raise ValueError(f"Unexpected folder format: {folder}")
 
     speaker_session = folder_parts[2]   # FC01S01
-    speaker = speaker_session[:-3]      # FC01 / F04 / MC02
-    session = speaker_session[-3:]      # S01 / S02
+    speaker = speaker_session[:4]       # FC01
+    session = speaker_session[4:]       # S01
 
     utterance = filename.split("_")[-1].replace(".wav", "")
 
     return group, speaker, session, utterance
 
 
-def main():
-    print("Collecting WAV files...")
-    wav_files = collect_wav_files(ROOT)
-    print(f"Found {len(wav_files)} wav files")
+# --------------------------------------------------
+# Collect WAV files grouped by session
+# --------------------------------------------------
+sessions = defaultdict(list)
 
-    if not wav_files:
-        raise RuntimeError("No WAV files found")
-
-    print("Grouping files by session...")
-    session_map = defaultdict(list)
-
-    for wav in wav_files:
-        try:
-            _, speaker, session, _ = parse_metadata(wav)
-            session_key = f"{speaker}_{session}"
-            session_map[session_key].append(wav)
-        except Exception:
-            continue
-
-    print(f"Found {len(session_map)} sessions")
-
-    print(f"Selecting {FILES_PER_SESSION} files per session...")
-    selected_wavs = []
-
-    for session_key in sorted(session_map.keys()):
-        files = session_map[session_key]
-        random.shuffle(files)
-        selected_wavs.extend(files[:FILES_PER_SESSION])
-
-    print(f"Total selected files: {len(selected_wavs)}")
-
-    print("Loading Whisper model...")
-    model = whisper.load_model(MODEL_NAME, device=DEVICE)
-
-    print("Starting transcription...")
-    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "file",
-                "group",
-                "speaker",
-                "session",
-                "utterance",
-                "language",
-                "text"
-            ]
-        )
-        writer.writeheader()
-
-        for i, wav in enumerate(selected_wavs, start=1):
+for root, _, files in os.walk(ROOT):
+    for f in files:
+        if f.lower().endswith(".wav"):
+            full_path = os.path.join(root, f)
             try:
-                group, speaker, session, utt = parse_metadata(wav)
-                result = model.transcribe(wav, fp16=False)
-
-                writer.writerow({
-                    "file": wav,
-                    "group": group,
-                    "speaker": speaker,
-                    "session": session,
-                    "utterance": utt,
-                    "language": result["language"],
-                    "text": result["text"]
-                })
-
-                print(f"[{i}/{len(selected_wavs)}] ✓ {speaker}-{session}-{utt}")
-
+                group, speaker, session, utt = parse_metadata(full_path)
+                key = (group, speaker, session)
+                sessions[key].append(full_path)
             except Exception as e:
-                print(f"[{i}] ✗ Failed: {wav}")
-                print("   ", e)
+                print("Skipping:", full_path, e)
 
-    print("Done. Results saved to", OUTPUT_CSV)
+print(f"Found {len(sessions)} sessions")
 
 
-if __name__ == "__main__":
-    main()
+# --------------------------------------------------
+# Transcribe (5 files per session)
+# --------------------------------------------------
+rows = []
+
+for (group, speaker, session), wavs in sessions.items():
+    wavs = sorted(wavs)[:FILES_PER_SESSION]
+
+    for wav in wavs:
+        try:
+            result = mlx_whisper.transcribe(
+                wav,
+                path_or_hf_repo=MODEL_NAME
+            )
+
+            rows.append({
+                "file": wav,
+                "group": group,
+                "speaker": speaker,
+                "session": session,
+                "utterance": os.path.basename(wav).split("_")[-1].replace(".wav", ""),
+                "language": result.get("language", "en"),
+                "text": result["text"].strip()
+            })
+
+            print(f"[{speaker}-{session}] {result['text']}")
+
+        except Exception as e:
+            print("Failed:", wav, e)
+
+
+# --------------------------------------------------
+# Write CSV
+# --------------------------------------------------
+with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(
+        f,
+        fieldnames=[
+            "file",
+            "group",
+            "speaker",
+            "session",
+            "utterance",
+            "language",
+            "text"
+        ]
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+
+print(f"\nSaved {len(rows)} rows to {OUTPUT_CSV}")
