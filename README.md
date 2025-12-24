@@ -1,6 +1,6 @@
-# Whisperer - AI Based translator and fluent-er for speech impediments
+# Whisperer - MLX Edition
 
-Small collection of scripts for transcription, language detection, TTS and simple translation.
+Small collection of scripts for transcription, language detection, TTS and simple translation but for Apple silicon chips.
 
 Quick start
 

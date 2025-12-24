@@ -1,4 +1,4 @@
-openai-whisper
+openai-whisper # or whisper-mlx
 torch
 torchaudio
 numpy
